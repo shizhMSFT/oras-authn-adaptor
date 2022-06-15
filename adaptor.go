@@ -10,38 +10,56 @@ import (
 	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
-type Adaptor struct {
-	authn.Keychain
-}
-
-func (a Adaptor) Credential(ctx context.Context, registry string) (auth.Credential, error) {
-	authenticator, err := a.Keychain.Resolve(resource{registry})
-	if err != nil {
-		return auth.EmptyCredential, err
-	}
-	authConfig, err := authenticator.Authorization()
-	if err != nil {
-		return auth.EmptyCredential, err
-	}
-	if authConfig.Auth != "" {
-		c, err := base64.StdEncoding.DecodeString(authConfig.Auth)
+// AdaptHelper adapt crane helper to oras credential function
+func AdaptHelper(helper authn.Helper) func(context.Context, string) (auth.Credential, error) {
+	return func(_ context.Context, registry string) (auth.Credential, error) {
+		username, secret, err := helper.Get(registry)
 		if err != nil {
 			return auth.EmptyCredential, err
 		}
-		cs := string(c)
-		username, password, ok := strings.Cut(cs, ":")
-		if !ok {
-			return auth.EmptyCredential, errors.New("invalid auth")
+		if username == "<token>" {
+			return auth.Credential{
+				RefreshToken: secret,
+			}, nil
 		}
-		authConfig.Username = username
-		authConfig.Password = password
+		return auth.Credential{
+			Username: username,
+			Password: secret,
+		}, nil
 	}
-	return auth.Credential{
-		Username:     authConfig.Username,
-		Password:     authConfig.Password,
-		RefreshToken: authConfig.IdentityToken,
-		AccessToken:  authConfig.RegistryToken,
-	}, nil
+}
+
+// AdaptKeychain adapt crane keychain to oras credential function
+func AdaptKeychain(kc authn.Keychain) func(context.Context, string) (auth.Credential, error) {
+	return func(_ context.Context, registry string) (auth.Credential, error) {
+		authenticator, err := kc.Resolve(resource{registry})
+		if err != nil {
+			return auth.EmptyCredential, err
+		}
+		authConfig, err := authenticator.Authorization()
+		if err != nil {
+			return auth.EmptyCredential, err
+		}
+		if authConfig.Auth != "" {
+			c, err := base64.StdEncoding.DecodeString(authConfig.Auth)
+			if err != nil {
+				return auth.EmptyCredential, err
+			}
+			cs := string(c)
+			username, password, ok := strings.Cut(cs, ":")
+			if !ok {
+				return auth.EmptyCredential, errors.New("invalid auth")
+			}
+			authConfig.Username = username
+			authConfig.Password = password
+		}
+		return auth.Credential{
+			Username:     authConfig.Username,
+			Password:     authConfig.Password,
+			RefreshToken: authConfig.IdentityToken,
+			AccessToken:  authConfig.RegistryToken,
+		}, nil
+	}
 }
 
 type resource struct {
